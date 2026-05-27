@@ -1,0 +1,17 @@
+{
+  "name": "anatomy-quiz-app",
+  "version": "1.0.0",
+  "description": "Anatomy MCQ Quiz App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.22.2",
+    "node-fetch": "^2.7.0",
+    "uuid": "^14.0.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
