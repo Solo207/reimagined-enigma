@@ -724,13 +724,14 @@ function goToQuestion(index) {
 function closeModal()    { document.getElementById('submitModal').className = 'modal-overlay'; }
 function confirmSubmit() { closeModal(); doSubmit(); }
 
+const PENDING_KEY = 'bm_quiz_pending_' + QUIZ_ID;
+
 // ── Submit ────────────────────────────────────────────────────────────────────
 async function doSubmit() {
   document.getElementById('questionCard').style.display = 'none';
   document.querySelector('.nav').style.display          = 'none';
   document.querySelector('.qnav-wrap').style.display    = 'none';
   document.getElementById('resultsCard').className      = 'results-card show';
-  document.getElementById('submitStatus').textContent   = 'Submitting…';
 
   // Fill skipped as wrong
   QUESTIONS.forEach(q => {
@@ -738,12 +739,12 @@ async function doSubmit() {
       results.push({ number: q.number, correct: false, selectedLetter: null, skipped: true });
   });
 
-  const correct  = results.filter(r => r.correct).length;
-  const skipped  = results.filter(r => r.skipped).length;
-  const wrong    = results.filter(r => !r.correct && !r.skipped).length;
-  const pct      = Math.round(correct / QUESTIONS.length * 100);
-  const kept     = bookmarks.size;
-  const removed  = QUESTIONS.length - kept;
+  const correct = results.filter(r => r.correct).length;
+  const skipped = results.filter(r => r.skipped).length;
+  const wrong   = results.filter(r => !r.correct && !r.skipped).length;
+  const pct     = Math.round(correct / QUESTIONS.length * 100);
+  const kept    = bookmarks.size;
+  const removed = QUESTIONS.length - kept;
 
   document.getElementById('scoreBig').textContent     = correct + ' / ' + QUESTIONS.length;
   document.getElementById('scorePercent').textContent = pct + '% Correct';
@@ -760,6 +761,8 @@ async function doSubmit() {
     wrong_answers:     wrong,
     skipped_questions: skipped,
     total_questions:   QUESTIONS.length,
+    kept_bookmarks:    kept,
+    removed_bookmarks_count: removed,
     remaining_bookmarks: QUESTIONS
       .filter(q => bookmarks.has(q.number))
       .map(q => ({ number: q.number, question: q.question, answer_letter: q.answer_letter, answer_text: q.answer_text })),
@@ -769,6 +772,18 @@ async function doSubmit() {
     corrections: Object.values(corrections).filter(c => c.sent)
   };
 
+  // ── Save payload BEFORE attempting — quiz + state stay alive until confirmed ──
+  try { localStorage.setItem(PENDING_KEY, JSON.stringify(payload)); } catch(e) {}
+
+  await attemptSubmitAndFinalize(payload);
+}
+
+// Tries to POST to server. On success: clears everything. On failure: keeps
+// quiz + state alive and listens for reconnection to auto-retry.
+async function attemptSubmitAndFinalize(payload) {
+  const statusEl = document.getElementById('submitStatus');
+  if (statusEl) statusEl.textContent = 'Submitting…';
+
   let ok = false;
   try {
     const r = await fetch('/submit/' + QUIZ_ID, {
@@ -776,13 +791,56 @@ async function doSubmit() {
       credentials: 'same-origin', body: JSON.stringify(payload)
     });
     ok = r.ok;
-  } catch(e) {}
+  } catch(e) { ok = false; }
 
-  clearState();
-  await fetch('/quiz/' + QUIZ_ID, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
-  document.getElementById('submitStatus').textContent = ok
-    ? '✓ Review submitted successfully!'
-    : '⚠ Could not reach server — results saved locally.';
+  if (ok) {
+    // ── Success: clean up pending, state, and server quiz ──
+    try { localStorage.removeItem(PENDING_KEY); } catch(e) {}
+    clearState();
+    await fetch('/quiz/' + QUIZ_ID, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
+    if (statusEl) statusEl.textContent = '✓ Review submitted successfully!';
+  } else {
+    // ── Failure: quiz + state stay intact; retry when back online ──
+    if (statusEl) statusEl.innerHTML =
+      '📡 No connection — results saved locally.<br>' +
+      '<small id="retryMsg" style="color:var(--muted);font-size:.8rem;margin-top:4px;display:block;">' +
+      'Will submit automatically when you reconnect.</small>';
+    window.addEventListener('online', async function onReconnect() {
+      const retryMsg = document.getElementById('retryMsg');
+      if (retryMsg) retryMsg.textContent = 'Reconnected — retrying…';
+      try {
+        const raw = localStorage.getItem(PENDING_KEY);
+        if (raw) await attemptSubmitAndFinalize(JSON.parse(raw));
+      } catch(e) {
+        window.addEventListener('online', onReconnect, { once: true });
+      }
+    }, { once: true });
+  }
+}
+
+// Called on every page load. If a pending payload exists, skip the quiz and
+// go straight to the results screen, then retry the submission.
+async function checkPending() {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    if (!raw) return false;
+    const p = JSON.parse(raw);
+
+    document.getElementById('questionCard').style.display = 'none';
+    document.querySelector('.nav').style.display          = 'none';
+    document.querySelector('.qnav-wrap').style.display    = 'none';
+    document.getElementById('resultsCard').className      = 'results-card show';
+
+    document.getElementById('scoreBig').textContent     = p.score         || '—';
+    document.getElementById('scorePercent').textContent = p.score_percent  || '';
+    document.getElementById('statCorrect').textContent  = p.correct_answers   ?? '—';
+    document.getElementById('statWrong').textContent    = p.wrong_answers     ?? '—';
+    document.getElementById('statKept').textContent     = p.kept_bookmarks    ?? '—';
+    document.getElementById('statRemoved').textContent  = p.removed_bookmarks_count ?? '—';
+
+    await attemptSubmitAndFinalize(p);
+    return true;
+  } catch(e) { return false; }
 }
 
 // ── Bookmarks ─────────────────────────────────────────────────────────────────
@@ -871,7 +929,9 @@ function renderQNav() {
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.getElementById('bmIconBtn').onclick = toggleBookmark;
 loadState();
-render();
+// On load: if a pending submission exists, resume results screen and retry.
+// Otherwise render the quiz normally.
+checkPending().then(hasPending => { if (!hasPending) render(); });
 </script>
 </body>
 </html>`;
