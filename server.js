@@ -12,7 +12,7 @@ app.use(cookieParser());
 // ── Config ────────────────────────────────────────────────────────────────────
 const STORE_FILE  = path.join(__dirname, 'bookmarks-quizzes.json');
 const TTL_MS = 24 * 60 * 60 * 1000;
-const WEBHOOK_URL = 'https://smce-n8n.tx5mac.easypanel.host/webhook/webbook';
+const WEBHOOK_URL = 'https://sb-n8n.rthat7s.easypanel.host/webhook/webbook';
 
 // ── Atomic write queue ────────────────────────────────────────────────────────
 let storeWriteQueue = Promise.resolve();
