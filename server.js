@@ -1031,10 +1031,47 @@ async function submitReviewUpdates() {
   await attemptSubmitAndFinalize(payload);
 }
 
+// ── Auto-retry ────────────────────────────────────────────────────────────────
+// The browser's "online" event only fires on real link-layer changes (wifi
+// reconnecting, airplane mode, etc). It never fires if the device was online
+// the whole time but the request still failed (a slow/flaky server, a
+// timeout, a transient 502 from the webhook) — that case needs its own retry
+// loop, not just a connectivity listener.
+let retryTimer = null;
+let retryDelay = 3000;
+const RETRY_MAX_DELAY = 30000;
+let submitInFlight = false;
+
+function clearScheduledRetry() {
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+}
+function scheduleRetry() {
+  clearScheduledRetry();
+  retryTimer = setTimeout(retryNow, retryDelay);
+  retryDelay = Math.min(Math.round(retryDelay * 1.6), RETRY_MAX_DELAY);
+}
+async function retryNow() {
+  clearScheduledRetry();
+  const raw = localStorage.getItem(PENDING_KEY);
+  if (!raw) return; // already submitted successfully via another path
+  let payload;
+  try { payload = JSON.parse(raw); } catch(e) { return; }
+  await attemptSubmitAndFinalize(payload);
+}
+// Instant retry triggers — on top of (not instead of) the backoff loop above,
+// so a genuine reconnect or the tab regaining focus does not have to wait out
+// the current backoff delay.
+window.addEventListener('online', () => { retryDelay = 3000; retryNow(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') retryNow();
+});
+
 // Tries to POST to server. On success: clears the retry cache only — the quiz
 // record and local results stay put so results/Review keep working. On
-// failure: keeps everything alive and listens for reconnection to auto-retry.
+// failure: keeps everything alive and retries automatically in the background.
 async function attemptSubmitAndFinalize(payload) {
+  if (submitInFlight) return;
+  submitInFlight = true;
   const statusEl = document.getElementById('submitStatus');
   if (statusEl) statusEl.textContent = 'Submitting…';
 
@@ -1044,27 +1081,24 @@ async function attemptSubmitAndFinalize(payload) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin', body: JSON.stringify(payload)
     });
-    ok = r.ok;
+    if (r.ok) {
+      const data = await r.json().catch(() => null);
+      ok = !!(data && data.ok);
+    }
   } catch(e) { ok = false; }
+  submitInFlight = false;
 
   if (ok) {
     try { localStorage.removeItem(PENDING_KEY); } catch(e) {}
+    clearScheduledRetry();
+    retryDelay = 3000;
     if (statusEl) statusEl.textContent = '✓ Review submitted successfully!';
   } else {
     if (statusEl) statusEl.innerHTML =
-      '📡 No connection — results saved locally.<br>' +
-      '<small id="retryMsg" style="color:var(--muted);font-size:.8rem;margin-top:4px;display:block;">' +
-      'Will submit automatically when you reconnect.</small>';
-    window.addEventListener('online', async function onReconnect() {
-      const retryMsg = document.getElementById('retryMsg');
-      if (retryMsg) retryMsg.textContent = 'Reconnected — retrying…';
-      try {
-        const raw = localStorage.getItem(PENDING_KEY);
-        if (raw) await attemptSubmitAndFinalize(JSON.parse(raw));
-      } catch(e) {
-        window.addEventListener('online', onReconnect, { once: true });
-      }
-    }, { once: true });
+      'Could not reach the server — results saved locally.<br>' +
+      '<small style="color:var(--muted);font-size:.8rem;margin-top:4px;display:block;">' +
+      'Retrying automatically…</small>';
+    scheduleRetry();
   }
 }
 
