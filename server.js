@@ -12,7 +12,7 @@ app.use(cookieParser());
 // ── Config ────────────────────────────────────────────────────────────────────
 const STORE_FILE  = path.join(__dirname, 'bookmarks-quizzes.json');
 const TTL_MS = 24 * 60 * 60 * 1000;
-const WEBHOOK_URL = 'https://sb-n8n.rthat7s.easypanel.host/webhook/webbook';
+const WEBHOOK_URL = 'https://sb-n8n.rhat7s.easypanel.host/webhook/webbook';
 // Fired once, from the results screen, when the student deletes their saved
 // bookmark session entirely.
 const DELETE_WEBHOOK_URL = 'https://sb-n8n.rhat7s.easypanel.host/webhook/payUrDues';
@@ -1071,21 +1071,38 @@ document.addEventListener('visibilitychange', () => {
 // failure: keeps everything alive and retries automatically in the background.
 async function attemptSubmitAndFinalize(payload) {
   if (submitInFlight) return;
+
+  // Don't even attempt the request if the browser already knows it's offline —
+  // just wait for the 'online' event (which calls retryNow() immediately).
+  if (navigator.onLine === false) {
+    const statusEl = document.getElementById('submitStatus');
+    if (statusEl) statusEl.innerHTML =
+      "You're offline — results saved locally.<br>" +
+      '<small style="color:var(--muted);font-size:.8rem;margin-top:4px;display:block;">' +
+      "Will submit automatically once you're back online…</small>";
+    scheduleRetry();
+    return;
+  }
+
   submitInFlight = true;
   const statusEl = document.getElementById('submitStatus');
   if (statusEl) statusEl.textContent = 'Submitting…';
 
   let ok = false;
+  let reachedServer = false;
   try {
     const r = await fetch('/submit/' + QUIZ_ID, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin', body: JSON.stringify(payload)
     });
+    reachedServer = true; // got an HTTP response at all — phone is online
     if (r.ok) {
       const data = await r.json().catch(() => null);
       ok = !!(data && data.ok);
     }
-  } catch(e) { ok = false; }
+  } catch (e) {
+    reachedServer = false; // fetch itself never completed — genuine connectivity issue
+  }
   submitInFlight = false;
 
   if (ok) {
@@ -1093,13 +1110,15 @@ async function attemptSubmitAndFinalize(payload) {
     clearScheduledRetry();
     retryDelay = 3000;
     if (statusEl) statusEl.textContent = '✓ Review submitted successfully!';
-  } else {
-    if (statusEl) statusEl.innerHTML =
-      'Could not reach the server — results saved locally.<br>' +
-      '<small style="color:var(--muted);font-size:.8rem;margin-top:4px;display:block;">' +
-      'Retrying automatically…</small>';
-    scheduleRetry();
+    return;
   }
+
+  if (statusEl) {
+    statusEl.innerHTML = reachedServer
+      ? 'Server hiccup — results saved locally.<br><small style="color:var(--muted);font-size:.8rem;margin-top:4px;display:block;">Retrying automatically…</small>'
+      : "Could not reach the server — results saved locally.<br><small style=\"color:var(--muted);font-size:.8rem;margin-top:4px;display:block;\">Retrying automatically…</small>";
+  }
+  scheduleRetry();
 }
 
 async function checkPending() {
