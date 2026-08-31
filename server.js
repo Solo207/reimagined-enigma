@@ -12,7 +12,7 @@ app.use(cookieParser());
 // ── Config ────────────────────────────────────────────────────────────────────
 const STORE_FILE  = path.join(__dirname, 'bookmarks-quizzes.json');
 const TTL_MS = 24 * 60 * 60 * 1000;
-const WEBHOOK_URL = 'https://sb-n8n.rthat7s.easypanel.host/webhook/webbook';
+const WEBHOOK_URL = 'https://sb-n8n.rhat7s.easypanel.host/webhook/webbook';
 // Fired once, from the results screen, when the student deletes their saved
 // bookmark session entirely.
 const DELETE_WEBHOOK_URL = 'https://sb-n8n.rhat7s.easypanel.host/webhook/payUrDues';
