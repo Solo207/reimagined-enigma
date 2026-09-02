@@ -801,7 +801,12 @@ function render() {
     if (!finalized) {
       document.getElementById('changeAnswerWrap').className = 'change-answer-wrap show';
     }
-    if (!blind && !prevResult.correct && !sentCorr) document.getElementById('disagreeWrap').className = 'disagree-wrap show';
+    // Bookmarking and "disagree with answer" stay active after submission/finalization
+    // (review), on BOTH correct and wrong questions — students may want to flag a
+    // question they got right but still think is worded wrong or has a bad key.
+    // Disagree stays hidden during a blind, still-in-progress timed pass, and once
+    // a correction has already been sent for this question.
+    if (!blind && !sentCorr) document.getElementById('disagreeWrap').className = 'disagree-wrap show';
   } else {
     answered = false; nextBtn.classList.add('skip-mode');
   }
@@ -846,7 +851,8 @@ function selectOption(letter, btn) {
   results = results.filter(r => r.number !== q.number);
   results.push({ number: q.number, correct, selectedLetter: letter });
   document.getElementById('changeAnswerWrap').className = 'change-answer-wrap show';
-  if (!blind && !correct && !corrections[q.number]?.sent) document.getElementById('disagreeWrap').className = 'disagree-wrap show';
+  // Available regardless of correct/wrong — same reasoning as in render() above.
+  if (!blind && !corrections[q.number]?.sent) document.getElementById('disagreeWrap').className = 'disagree-wrap show';
   const nextBtn = document.getElementById('nextBtn');
   nextBtn.classList.remove('skip-mode');
   nextBtn.textContent = isLast ? 'Submit & Finish 🔖' : 'Next →';
