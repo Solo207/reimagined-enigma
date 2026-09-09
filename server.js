@@ -451,6 +451,47 @@ function quizPage(id, quiz) {
     .qnav-chip.qn-has-bookmark::after{content:'●';position:absolute;top:2px;right:3px;
       color:var(--bookmark);font-size:.5rem;line-height:1;}
 
+    /* ── Tutorial walkthrough ── */
+    .tutorial-overlay{position:fixed;inset:0;z-index:250;display:none;}
+    .tutorial-overlay.show{display:block;}
+    .tutorial-mask{position:fixed;inset:0;z-index:1;
+      background:rgba(9,11,24,.72);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);}
+    .tutorial-card{position:fixed;z-index:2;max-width:320px;width:calc(100% - 32px);
+      background:var(--surface);border:1px solid var(--bookmark);border-radius:16px;
+      padding:18px 20px 16px;box-shadow:0 12px 40px rgba(0,0,0,.55);top:50%;left:50%;
+      transform:translate(-50%,-50%);animation:tutCardIn .3s cubic-bezier(.4,0,.2,1);}
+    @keyframes tutCardIn{from{opacity:0;transform:translateY(8px) scale(.97);}to{opacity:1;transform:translateY(0) scale(1);}}
+    .tutorial-card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+    .tutorial-progress{display:flex;gap:6px;}
+    .tutorial-dot{width:7px;height:7px;border-radius:50%;background:var(--border);transition:all .2s;}
+    .tutorial-dot.active{background:var(--bookmark);width:18px;border-radius:4px;}
+    .tutorial-dot.done{background:rgba(245,158,11,.5);}
+    .tutorial-skip{background:none;border:none;color:var(--muted);font-family:'Sora',sans-serif;
+      font-size:.75rem;cursor:pointer;padding:4px 6px;transition:color .2s;}
+    .tutorial-skip:hover{color:var(--text);}
+    .tutorial-icon{font-size:1.5rem;margin-bottom:6px;}
+    .tutorial-title{font-size:1rem;font-weight:600;color:var(--text);margin-bottom:6px;}
+    .tutorial-desc{font-size:.84rem;color:var(--muted);line-height:1.55;margin-bottom:16px;}
+    .tutorial-nav{display:flex;gap:10px;}
+    .tutorial-btn{padding:10px;border-radius:10px;font-family:'Sora',sans-serif;
+      font-size:.82rem;font-weight:600;cursor:pointer;transition:all .2s;border:none;}
+    .tutorial-btn-prev{background:var(--surface2);border:1px solid var(--border);color:var(--muted);flex:0 0 auto;min-width:76px;}
+    .tutorial-btn-prev:hover:not(:disabled){border-color:var(--accent);color:var(--text);}
+    .tutorial-btn-prev:disabled{opacity:.3;cursor:not-allowed;}
+    .tutorial-btn-next{background:linear-gradient(135deg,var(--bookmark),#f97316);color:#fff;flex:1;}
+    .tutorial-btn-next:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(245,158,11,.3);}
+
+    /* Ghost/preview controls shown during a tutorial step for a feature that
+       isn't actually available on screen yet (e.g. Change Answer before any
+       question is answered, or bookmarking during a blind timed pass) */
+    .tutorial-ghost{opacity:.62 !important;pointer-events:none !important;position:relative;
+      outline:2px dashed var(--bookmark);outline-offset:5px;border-radius:12px;
+      animation:tutGhostPulse 1.6s ease-in-out infinite;}
+    @keyframes tutGhostPulse{0%,100%{outline-color:rgba(245,158,11,.9);}50%{outline-color:rgba(245,158,11,.3);}}
+    .tutorial-ghost::after{content:'PREVIEW';position:absolute;top:-9px;right:-6px;
+      background:var(--bookmark);color:#1a1206;font-family:var(--mono);font-size:.55rem;
+      font-weight:700;letter-spacing:.06em;padding:2px 6px;border-radius:5px;z-index:2;white-space:nowrap;}
+
     /* ── Modal ── */
     .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;
       display:none;align-items:center;justify-content:center;padding:20px;}
@@ -506,6 +547,7 @@ function quizPage(id, quiz) {
       .qnav-chip{width:36px;height:36px;font-size:.75rem;}
       .btn{font-size:.85rem;padding:13px;} .btn-prev{min-width:80px;} .modal-box{padding:24px 18px;}
       .exam-timer{font-size:.7rem;padding:5px 10px;} .bm-list-btn{font-size:.72rem;padding:5px 10px;}
+      .tutorial-card{padding:16px 16px 14px;} .tutorial-title{font-size:.94rem;} .tutorial-desc{font-size:.8rem;}
     }
     @media(max-width:360px){.qnav-chip{width:32px;height:32px;font-size:.7rem;}}
   </style>
@@ -610,6 +652,23 @@ function quizPage(id, quiz) {
     ${quiz.timeMinutes > 0 && !quiz.reviewed ? '<button class="btn-review" id="reviewBtn" onclick="enterReview()">📝 Review Answers</button>' : ''}
     <button class="btn-delete-bookmark" id="deleteBookmarkBtn" onclick="promptDeleteBookmark()">🗑️ Delete Bookmark</button>
     <div class="submit-status" id="submitStatus">Submitting…</div>
+  </div>
+</div>
+
+<div class="tutorial-overlay" id="tutorialOverlay">
+  <div class="tutorial-mask" id="tutorialMask"></div>
+  <div class="tutorial-card" id="tutorialCard">
+    <div class="tutorial-card-top">
+      <div class="tutorial-progress" id="tutorialProgress"></div>
+      <button class="tutorial-skip" id="tutorialSkipBtn" onclick="skipTutorial()">Skip ✕</button>
+    </div>
+    <div class="tutorial-icon" id="tutorialIcon"></div>
+    <div class="tutorial-title" id="tutorialTitle"></div>
+    <div class="tutorial-desc" id="tutorialDesc"></div>
+    <div class="tutorial-nav">
+      <button class="tutorial-btn tutorial-btn-prev" id="tutorialPrevBtn" onclick="prevTutStep()">← Back</button>
+      <button class="tutorial-btn tutorial-btn-next" id="tutorialNextBtn" onclick="nextTutStep()">Next →</button>
+    </div>
   </div>
 </div>
 
@@ -942,6 +1001,7 @@ function enterReview() {
   document.querySelector('.nav').style.display = '';
   document.querySelector('.qnav-wrap').style.display = '';
   render();
+  setTimeout(maybeStartReviewTutorial, 450);
 }
 
 // ── Submission ────────────────────────────────────────────────────────────────
@@ -1250,6 +1310,183 @@ function renderQNav() {
   resize(); draw();
 })();
 
+// ── Tutorial (first-time walkthrough, shown once per device) ─────────────────
+// Doesn't change any quiz behavior — it only ever (a) points at real, already-
+// visible controls, or (b) very briefly reveals a control that's normally
+// hidden at that point (dashed "PREVIEW" outline, clicks disabled) purely so
+// it can be pointed at, then puts it back exactly how it was.
+const TUT_KEY_PREFIX = 'tut_seen_';
+function tutSeen(name)     { try { return !!localStorage.getItem(TUT_KEY_PREFIX + name); } catch(e) { return true; } }
+function tutMarkSeen(name) { try { localStorage.setItem(TUT_KEY_PREFIX + name, '1'); } catch(e) {} }
+
+let tutSteps = [], tutIndex = 0, tutActive = false, tutName = '', tutCleanupFns = [], tutCurrentTarget = null;
+
+function tutGhost(el) {
+  if (!el) return;
+  el.classList.add('tutorial-ghost');
+  tutCleanupFns.push(() => el.classList.remove('tutorial-ghost'));
+}
+function tutForceShow(el) {
+  if (!el) return;
+  const prev = el.style.display;
+  el.style.display = '';
+  tutCleanupFns.push(() => { el.style.display = prev; });
+}
+function tutAddClass(el, cls) {
+  if (!el || el.classList.contains(cls)) return;
+  el.classList.add(cls);
+  tutCleanupFns.push(() => el.classList.remove(cls));
+}
+
+function buildTimedStartSteps() {
+  // Blind (timed, not-yet-finalized) pass: bookmark controls are hidden and
+  // Change Answer hasn't appeared yet (nothing answered). All three previews.
+  return [
+    { setup: () => { tutForceShow(document.getElementById('bmControls')); tutGhost(document.getElementById('bmIconBtn'));
+        return document.getElementById('bmIconBtn'); },
+      icon: '🔖', title: 'Bookmark questions',
+      desc: "Tap the flag to save a question you want to revisit. During a timed run this stays tucked away — you'll get to manage it once you submit and open Review." },
+    { setup: () => document.getElementById('bmListBtn'),
+      icon: '📋', title: 'Your saved list',
+      desc: 'This shows how many questions are still bookmarked — every question starts out saved. You can open the list and remove ones you don\u2019t need in Review.' },
+    { setup: () => { tutAddClass(document.getElementById('changeAnswerWrap'), 'show'); tutGhost(document.getElementById('changeAnswerWrap'));
+        return document.getElementById('changeAnswerWrap'); },
+      icon: '↩', title: 'Change Answer',
+      desc: "Once you pick an answer, this button appears right here so you can change your mind before moving on. It won't show until you've actually answered a question." }
+  ];
+}
+
+function buildTimedReviewSteps() {
+  // Post-submit Review: everything is real and already on screen.
+  return [
+    { setup: () => document.getElementById('disagreeWrap'),
+      icon: '✏️', title: 'Disagree with the key?',
+      desc: 'Think a question has the wrong answer? Tap this to pick what you believe is correct and explain why — it\u2019s sent along when you finish reviewing.' },
+    { setup: () => document.getElementById('bmIconBtn'),
+      icon: '🔖', title: 'Bookmark questions',
+      desc: 'Now that you\u2019re reviewing, you can flag or unflag any question to keep saved.' },
+    { setup: () => document.getElementById('bmListBtn'),
+      icon: '📋', title: 'Your saved list',
+      desc: 'Tap to see everything still bookmarked and jump straight to it. Whatever you leave saved when you finish is what sticks.' }
+  ];
+}
+
+function buildUntimedSteps() {
+  // Untimed: bookmark controls are visible from the very start; Disagree
+  // only appears after answering, so it gets the preview treatment.
+  return [
+    { setup: () => document.getElementById('bmIconBtn'),
+      icon: '🔖', title: 'Bookmark questions',
+      desc: 'Tap the flag any time to save or unsave a question — every question starts out saved.' },
+    { setup: () => document.getElementById('bmListBtn'),
+      icon: '📋', title: 'Your saved list',
+      desc: 'Shows how many questions are still bookmarked. Tap it to see the list and jump straight to any of them.' },
+    { setup: () => { tutAddClass(document.getElementById('disagreeWrap'), 'show'); tutGhost(document.getElementById('disagreeWrap'));
+        return document.getElementById('disagreeWrap'); },
+      icon: '✏️', title: 'Disagree with the key?',
+      desc: "Once you've answered a question, this appears right here so you can propose a correction. It won't show until you've picked an answer." }
+  ];
+}
+
+function maybeStartInitialTutorial() {
+  if (SERVER_SUBMITTED) return;
+  if (EXAM_MODE) { if (!tutSeen('timedStart')) startTutorial('timedStart', buildTimedStartSteps()); }
+  else            { if (!tutSeen('untimed'))    startTutorial('untimed',    buildUntimedSteps()); }
+}
+function maybeStartReviewTutorial() {
+  if (!tutSeen('timedReview')) startTutorial('timedReview', buildTimedReviewSteps());
+}
+
+function startTutorial(name, steps) {
+  tutSteps = steps; tutIndex = 0; tutActive = true; tutName = name;
+  document.getElementById('tutorialOverlay').classList.add('show');
+  document.body.style.overflow = 'hidden';
+  window.addEventListener('resize', tutReposition);
+  renderTutStep();
+}
+
+function cleanupTutStep() {
+  tutCleanupFns.forEach(fn => { try { fn(); } catch(e) {} });
+  tutCleanupFns = [];
+}
+
+function renderTutStep() {
+  cleanupTutStep();
+  const step = tutSteps[tutIndex];
+  const target = step.setup();
+  tutCurrentTarget = target;
+
+  document.getElementById('tutorialIcon').textContent  = step.icon;
+  document.getElementById('tutorialTitle').textContent = step.title;
+  document.getElementById('tutorialDesc').textContent  = step.desc;
+
+  const prog = document.getElementById('tutorialProgress');
+  prog.innerHTML = tutSteps.map((_, i) =>
+    '<div class="tutorial-dot ' + (i === tutIndex ? 'active' : (i < tutIndex ? 'done' : '')) + '"></div>').join('');
+
+  document.getElementById('tutorialPrevBtn').disabled  = tutIndex === 0;
+  document.getElementById('tutorialNextBtn').textContent = tutIndex === tutSteps.length - 1 ? 'Got it! 🎉' : 'Next →';
+
+  if (target && target.scrollIntoView) target.scrollIntoView({ block: 'center' });
+  requestAnimationFrame(() => requestAnimationFrame(() => applySpotlight(target)));
+}
+
+function tutReposition() { if (tutActive) applySpotlight(tutCurrentTarget); }
+
+function applySpotlight(target) {
+  const mask = document.getElementById('tutorialMask');
+  if (!target) { mask.style.maskImage = 'none'; mask.style.webkitMaskImage = 'none'; positionCardCentered(); return; }
+  const r = target.getBoundingClientRect();
+  paintMask(r);
+  positionCard(r);
+}
+
+function paintMask(r) {
+  const pad = 8, radius = 14;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const x = Math.max(0, r.left - pad), y = Math.max(0, r.top - pad);
+  const w = r.width + pad * 2, h = r.height + pad * 2;
+  const uri = "url(\\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='" + vw + "' height='" + vh + "'%3E" +
+    "%3Crect width='100%25' height='100%25' fill='white'/%3E" +
+    "%3Crect x='" + x + "' y='" + y + "' width='" + w + "' height='" + h + "' rx='" + radius + "' fill='black'/%3E" +
+    "%3C/svg%3E\\")";
+  const mask = document.getElementById('tutorialMask');
+  mask.style.maskImage = uri; mask.style.webkitMaskImage = uri;
+}
+
+function positionCard(r) {
+  const card = document.getElementById('tutorialCard');
+  card.style.transform = 'none';
+  const cw = card.offsetWidth || 320, ch = card.offsetHeight || 200;
+  const vw = window.innerWidth, vh = window.innerHeight, margin = 16;
+  const spaceBelow = vh - r.bottom, spaceAbove = r.top;
+  let top;
+  if (spaceBelow >= ch + 24 || spaceBelow > spaceAbove) top = Math.min(r.bottom + 16, vh - ch - margin);
+  else top = Math.max(margin, r.top - ch - 16);
+  const left = Math.min(Math.max(margin, r.left + r.width / 2 - cw / 2), vw - cw - margin);
+  card.style.top = top + 'px';
+  card.style.left = left + 'px';
+}
+function positionCardCentered() {
+  const card = document.getElementById('tutorialCard');
+  card.style.top = '50%'; card.style.left = '50%'; card.style.transform = 'translate(-50%,-50%)';
+}
+
+function nextTutStep() {
+  if (tutIndex === tutSteps.length - 1) { finishTutorial(); return; }
+  tutIndex++; renderTutStep();
+}
+function prevTutStep() { if (tutIndex === 0) return; tutIndex--; renderTutStep(); }
+function skipTutorial() { finishTutorial(); }
+function finishTutorial() {
+  cleanupTutStep();
+  tutMarkSeen(tutName);
+  document.getElementById('tutorialOverlay').classList.remove('show');
+  document.body.style.overflow = '';
+  window.removeEventListener('resize', tutReposition);
+  tutActive = false; tutCurrentTarget = null;
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.getElementById('bmIconBtn').onclick = toggleBookmark;
 loadState();
@@ -1282,6 +1519,7 @@ async function init() {
       document.querySelector('.nav').style.display = '';
       document.querySelector('.qnav-wrap').style.display = '';
       render();
+      setTimeout(maybeStartReviewTutorial, 450);
     } else {
       computeAndShowResults();
       if (SERVER_REVIEWED) { const rb = document.getElementById('reviewBtn'); if (rb) rb.remove(); }
@@ -1291,7 +1529,7 @@ async function init() {
     return;
   }
   const hasPending = await checkPending();
-  if (!hasPending) { render(); startExamTimer(); }
+  if (!hasPending) { render(); startExamTimer(); setTimeout(maybeStartInitialTutorial, 450); }
 }
 init();
 </script>
