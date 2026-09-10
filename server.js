@@ -454,8 +454,21 @@ function quizPage(id, quiz) {
     /* ── Tutorial walkthrough ── */
     .tutorial-overlay{position:fixed;inset:0;z-index:250;display:none;}
     .tutorial-overlay.show{display:block;}
-    .tutorial-mask{position:fixed;inset:0;z-index:1;
-      background:rgba(9,11,24,.72);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);}
+    /* Four independent panels that tile the whole viewport MINUS the exact
+       rect being spotlighted — instead of one full-screen blurred layer with
+       a CSS mask cut into it. Masking backdrop-filter is inconsistent across
+       mobile browsers and can leave the "hole" still looking hazy; four plain
+       rectangles guarantee the spotlighted pixels are never touched at all. */
+    .tutorial-curtain{position:fixed;background:rgba(9,11,24,.72);
+      backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);
+      transition:top .25s cubic-bezier(.4,0,.2,1),left .25s cubic-bezier(.4,0,.2,1),
+        width .25s cubic-bezier(.4,0,.2,1),height .25s cubic-bezier(.4,0,.2,1);}
+    /* Invisible pane sitting exactly over the spotlighted rect — blocks taps
+       on the real (temporarily revealed) control during the walkthrough
+       without adding any blur/tint of its own. */
+    .tutorial-hole-guard{position:fixed;background:transparent;
+      transition:top .25s cubic-bezier(.4,0,.2,1),left .25s cubic-bezier(.4,0,.2,1),
+        width .25s cubic-bezier(.4,0,.2,1),height .25s cubic-bezier(.4,0,.2,1);}
     .tutorial-card{position:fixed;z-index:2;max-width:320px;width:calc(100% - 32px);
       background:var(--surface);border:1px solid var(--bookmark);border-radius:16px;
       padding:18px 20px 16px;box-shadow:0 12px 40px rgba(0,0,0,.55);top:50%;left:50%;
@@ -657,7 +670,11 @@ function quizPage(id, quiz) {
 </div>
 
 <div class="tutorial-overlay" id="tutorialOverlay">
-  <div class="tutorial-mask" id="tutorialMask"></div>
+  <div class="tutorial-curtain" id="tutCurtainTop"></div>
+  <div class="tutorial-curtain" id="tutCurtainBottom"></div>
+  <div class="tutorial-curtain" id="tutCurtainLeft"></div>
+  <div class="tutorial-curtain" id="tutCurtainRight"></div>
+  <div class="tutorial-hole-guard" id="tutorialHoleGuard"></div>
   <div class="tutorial-ring" id="tutorialRing"></div>
   <div class="tutorial-card" id="tutorialCard">
     <div class="tutorial-card-top">
@@ -1474,36 +1491,59 @@ function renderTutStep() {
 function tutReposition() { if (tutActive) applySpotlight(tutCurrentTarget); }
 
 function applySpotlight(target) {
-  const mask = document.getElementById('tutorialMask');
   const ring = document.getElementById('tutorialRing');
   if (!target) {
-    mask.style.maskImage = 'none'; mask.style.webkitMaskImage = 'none';
+    showFullCurtain();
     ring.classList.remove('show');
     positionCardCentered();
     return;
   }
   const r = target.getBoundingClientRect();
-  paintMask(r);
+  paintSpotlight(r);
   positionCard(r);
 }
 
-function paintMask(r) {
+// Tiles four plain (unmasked) blur panels around the target rect, leaving the
+// spotlighted pixels completely untouched — no blur, no dimming — plus an
+// invisible guard over that same rect so taps during the walkthrough don't
+// reach the temporarily-revealed real control.
+function paintSpotlight(r) {
   const pad = 8, radius = 14;
   const vw = window.innerWidth, vh = window.innerHeight;
   const x = Math.max(0, r.left - pad), y = Math.max(0, r.top - pad);
   const w = r.width + pad * 2, h = r.height + pad * 2;
-  const uri = "url(\\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='" + vw + "' height='" + vh + "'%3E" +
-    "%3Crect width='100%25' height='100%25' fill='white'/%3E" +
-    "%3Crect x='" + x + "' y='" + y + "' width='" + w + "' height='" + h + "' rx='" + radius + "' fill='black'/%3E" +
-    "%3C/svg%3E\\")";
-  const mask = document.getElementById('tutorialMask');
-  mask.style.maskImage = uri; mask.style.webkitMaskImage = uri;
+  const right = x + w, bottom = y + h;
+
+  const top = document.getElementById('tutCurtainTop');
+  const bot = document.getElementById('tutCurtainBottom');
+  const left = document.getElementById('tutCurtainLeft');
+  const rgt = document.getElementById('tutCurtainRight');
+  top.style.left = '0px'; top.style.top = '0px'; top.style.width = vw + 'px'; top.style.height = Math.max(0, y) + 'px';
+  bot.style.left = '0px'; bot.style.top = bottom + 'px'; bot.style.width = vw + 'px'; bot.style.height = Math.max(0, vh - bottom) + 'px';
+  left.style.left = '0px'; left.style.top = y + 'px'; left.style.width = Math.max(0, x) + 'px'; left.style.height = h + 'px';
+  rgt.style.left = right + 'px'; rgt.style.top = y + 'px'; rgt.style.width = Math.max(0, vw - right) + 'px'; rgt.style.height = h + 'px';
+
+  const guard = document.getElementById('tutorialHoleGuard');
+  guard.style.left = x + 'px'; guard.style.top = y + 'px'; guard.style.width = w + 'px'; guard.style.height = h + 'px';
 
   const ring = document.getElementById('tutorialRing');
   ring.style.left = x + 'px'; ring.style.top = y + 'px';
   ring.style.width = w + 'px'; ring.style.height = h + 'px';
   ring.style.borderRadius = radius + 'px';
   ring.classList.add('show');
+}
+
+// No target to point at (fallback) — one curtain covers the whole screen.
+function showFullCurtain() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const top = document.getElementById('tutCurtainTop');
+  top.style.left = '0px'; top.style.top = '0px'; top.style.width = vw + 'px'; top.style.height = vh + 'px';
+  ['tutCurtainBottom', 'tutCurtainLeft', 'tutCurtainRight'].forEach(id => {
+    const el = document.getElementById(id);
+    el.style.width = '0px'; el.style.height = '0px';
+  });
+  const guard = document.getElementById('tutorialHoleGuard');
+  guard.style.width = '0px'; guard.style.height = '0px';
 }
 
 function positionCard(r) {
