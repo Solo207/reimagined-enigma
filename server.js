@@ -481,16 +481,17 @@ function quizPage(id, quiz) {
     .tutorial-btn-next{background:linear-gradient(135deg,var(--bookmark),#f97316);color:#fff;flex:1;}
     .tutorial-btn-next:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(245,158,11,.3);}
 
-    /* Ghost/preview controls shown during a tutorial step for a feature that
-       isn't actually available on screen yet (e.g. Change Answer before any
-       question is answered, or bookmarking during a blind timed pass) */
-    .tutorial-ghost{opacity:.62 !important;pointer-events:none !important;position:relative;
-      outline:2px dashed var(--bookmark);outline-offset:5px;border-radius:12px;
-      animation:tutGhostPulse 1.6s ease-in-out infinite;}
-    @keyframes tutGhostPulse{0%,100%{outline-color:rgba(245,158,11,.9);}50%{outline-color:rgba(245,158,11,.3);}}
-    .tutorial-ghost::after{content:'PREVIEW';position:absolute;top:-9px;right:-6px;
-      background:var(--bookmark);color:#1a1206;font-family:var(--mono);font-size:.55rem;
-      font-weight:700;letter-spacing:.06em;padding:2px 6px;border-radius:5px;z-index:2;white-space:nowrap;}
+    /* Glowing frame drawn around whichever real on-screen element the current
+       tutorial step is pointing at (sized/positioned to match its live rect) */
+    .tutorial-ring{position:fixed;z-index:1;pointer-events:none;display:none;
+      border:2px solid var(--bookmark);
+      box-shadow:0 0 0 4px rgba(245,158,11,.16),0 0 28px rgba(245,158,11,.4);
+      animation:tutRingPulse 1.8s ease-in-out infinite;
+      transition:top .25s cubic-bezier(.4,0,.2,1),left .25s cubic-bezier(.4,0,.2,1),
+        width .25s cubic-bezier(.4,0,.2,1),height .25s cubic-bezier(.4,0,.2,1);}
+    .tutorial-ring.show{display:block;}
+    @keyframes tutRingPulse{0%,100%{box-shadow:0 0 0 4px rgba(245,158,11,.16),0 0 28px rgba(245,158,11,.4);}
+      50%{box-shadow:0 0 0 7px rgba(245,158,11,.08),0 0 14px rgba(245,158,11,.25);}}
 
     /* ── Modal ── */
     .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;
@@ -657,6 +658,7 @@ function quizPage(id, quiz) {
 
 <div class="tutorial-overlay" id="tutorialOverlay">
   <div class="tutorial-mask" id="tutorialMask"></div>
+  <div class="tutorial-ring" id="tutorialRing"></div>
   <div class="tutorial-card" id="tutorialCard">
     <div class="tutorial-card-top">
       <div class="tutorial-progress" id="tutorialProgress"></div>
@@ -701,7 +703,7 @@ const QUIZ_ID      = ${JSON.stringify(id)};
 const TITLE        = ${titleJson};
 const QUESTIONS    = ${questionsJson};
 const SESS_TOKEN   = ${tokenJson};
-const EXAM_ENDS_AT = ${examEndsAtJs};
+let EXAM_ENDS_AT = ${examEndsAtJs};
 // EXAM_MODE (a timer was set) means the live pass is "blind": no correct/wrong
 // reveal, no feedback text, no disagree, no bookmark toggling — only Change
 // Answer stays active. Everything reveals once finalized, via the one-time Review.
@@ -715,6 +717,7 @@ let current = 0, answered = false;
 let bookmarks = new Set();          // questions STILL bookmarked
 let corrections = {}, results = [], selectedCorrection = null;
 let reviewMode = false, finalized = false, examTimerInterval = null;
+let examTickFn = null, timerFrozenSince = null;
 const LETTERS = ['a','b','c','d','e'];
 
 // ── Persistence ───────────────────────────────────────────────────────────────
@@ -761,12 +764,16 @@ function formatHMS(ms) {
   return h > 0 ? (h + ':' + pad(m) + ':' + pad(s)) : (pad(m) + ':' + pad(s));
 }
 
+// Paints the current deadline immediately but does NOT start the countdown —
+// call resumeExamCountdown() to actually start it ticking. Splitting these
+// lets the very first (unseen) tutorial "freeze" the clock: the timer is
+// visible but static until the walkthrough is finished or skipped.
 function startExamTimer() {
   if (!EXAM_ENDS_AT) return;
   const wrap = document.getElementById('examTimer');
   const textEl = document.getElementById('timerText');
   wrap.classList.add('show');
-  function tick() {
+  examTickFn = function tick() {
     const remain = EXAM_ENDS_AT - Date.now();
     textEl.textContent = formatHMS(remain);
     wrap.classList.toggle('low', remain > 0 && remain <= 60000);
@@ -776,9 +783,27 @@ function startExamTimer() {
       textEl.textContent = '00:00';
       if (!finalized) doSubmit();
     }
+  };
+  examTickFn();
+}
+function resumeExamCountdown() {
+  if (!EXAM_ENDS_AT || examTimerInterval || !examTickFn) return;
+  examTimerInterval = setInterval(examTickFn, 1000);
+}
+function freezeExamCountdown() {
+  if (!EXAM_ENDS_AT) return;
+  timerFrozenSince = Date.now();
+}
+// Pushes the deadline back by however long the clock was frozen, so the
+// tutorial never eats into the student's actual exam time, then resumes.
+function unfreezeExamCountdown() {
+  if (!EXAM_ENDS_AT) return;
+  if (timerFrozenSince !== null) {
+    EXAM_ENDS_AT += (Date.now() - timerFrozenSince);
+    timerFrozenSince = null;
+    if (examTickFn) examTickFn();
   }
-  tick();
-  examTimerInterval = setInterval(tick, 1000);
+  resumeExamCountdown();
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -1310,22 +1335,34 @@ function renderQNav() {
   resize(); draw();
 })();
 
-// ── Tutorial (first-time walkthrough, shown once per device) ─────────────────
-// Doesn't change any quiz behavior — it only ever (a) points at real, already-
-// visible controls, or (b) very briefly reveals a control that's normally
-// hidden at that point (dashed "PREVIEW" outline, clicks disabled) purely so
-// it can be pointed at, then puts it back exactly how it was.
-const TUT_KEY_PREFIX = 'tut_seen_';
-function tutSeen(name)     { try { return !!localStorage.getItem(TUT_KEY_PREFIX + name); } catch(e) { return true; } }
-function tutMarkSeen(name) { try { localStorage.setItem(TUT_KEY_PREFIX + name, '1'); } catch(e) {} }
+// ── Tutorial (first-time walkthrough) ─────────────────────────────────────────
+// Every step points at the ACTUAL control on the real page — never a drawn-up
+// stand-in. A couple of controls (bookmarking during a blind timed pass,
+// Change Answer before anything's answered, Disagree before anything's
+// answered) are normally hidden at that exact moment, so those steps reveal
+// the real element itself just long enough to point at it, then restore it
+// to exactly whatever state it was in. Seen/progress state is scoped to this
+// specific quiz link (QUIZ_ID) so a different quiz link on the same device
+// still gets its own first-time walkthrough.
+const TUT_SEEN_PREFIX     = 'tut_seen_'     + QUIZ_ID + '_';
+const TUT_PROGRESS_PREFIX = 'tut_progress_' + QUIZ_ID + '_';
+function tutSeen(name)     { try { return !!localStorage.getItem(TUT_SEEN_PREFIX + name); } catch(e) { return true; } }
+function tutMarkSeen(name) {
+  try { localStorage.setItem(TUT_SEEN_PREFIX + name, '1'); localStorage.removeItem(TUT_PROGRESS_PREFIX + name); } catch(e) {}
+}
+function tutSaveProgress(name, idx) { try { localStorage.setItem(TUT_PROGRESS_PREFIX + name, String(idx)); } catch(e) {} }
+function tutLoadProgress(name) {
+  try {
+    const n = parseInt(localStorage.getItem(TUT_PROGRESS_PREFIX + name), 10);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  } catch(e) { return 0; }
+}
 
 let tutSteps = [], tutIndex = 0, tutActive = false, tutName = '', tutCleanupFns = [], tutCurrentTarget = null;
 
-function tutGhost(el) {
-  if (!el) return;
-  el.classList.add('tutorial-ghost');
-  tutCleanupFns.push(() => el.classList.remove('tutorial-ghost'));
-}
+// Temporarily reveals a real, normally-hidden control exactly the way the
+// app's own render() logic would once it's genuinely available, so the
+// tutorial is always pointing at the real thing — then reverts it precisely.
 function tutForceShow(el) {
   if (!el) return;
   const prev = el.style.display;
@@ -1340,24 +1377,22 @@ function tutAddClass(el, cls) {
 
 function buildTimedStartSteps() {
   // Blind (timed, not-yet-finalized) pass: bookmark controls are hidden and
-  // Change Answer hasn't appeared yet (nothing answered). All three previews.
+  // Change Answer hasn't appeared yet (nothing answered) — reveal the real ones.
   return [
-    { setup: () => { tutForceShow(document.getElementById('bmControls')); tutGhost(document.getElementById('bmIconBtn'));
-        return document.getElementById('bmIconBtn'); },
+    { setup: () => { tutForceShow(document.getElementById('bmControls')); return document.getElementById('bmIconBtn'); },
       icon: '🔖', title: 'Bookmark questions',
-      desc: "Tap the flag to save a question you want to revisit. During a timed run this stays tucked away — you'll get to manage it once you submit and open Review." },
-    { setup: () => document.getElementById('bmListBtn'),
+      desc: "Tap the flag to save a question you want to revisit. During a timed run this stays tucked away — you'll manage it once you submit and open Review." },
+    { setup: () => { tutForceShow(document.getElementById('bmControls')); return document.getElementById('bmListBtn'); },
       icon: '📋', title: 'Your saved list',
-      desc: 'This shows how many questions are still bookmarked — every question starts out saved. You can open the list and remove ones you don\u2019t need in Review.' },
-    { setup: () => { tutAddClass(document.getElementById('changeAnswerWrap'), 'show'); tutGhost(document.getElementById('changeAnswerWrap'));
-        return document.getElementById('changeAnswerWrap'); },
+      desc: 'Shows how many questions are still bookmarked — every question starts out saved. Open the list any time to remove ones you don\u2019t need in Review.' },
+    { setup: () => { tutAddClass(document.getElementById('changeAnswerWrap'), 'show'); return document.getElementById('changeAnswerWrap'); },
       icon: '↩', title: 'Change Answer',
-      desc: "Once you pick an answer, this button appears right here so you can change your mind before moving on. It won't show until you've actually answered a question." }
+      desc: 'Once you pick an answer, tap this to change your mind before moving to the next question.' }
   ];
 }
 
 function buildTimedReviewSteps() {
-  // Post-submit Review: everything is real and already on screen.
+  // Post-submit Review: everything is already real and on screen.
   return [
     { setup: () => document.getElementById('disagreeWrap'),
       icon: '✏️', title: 'Disagree with the key?',
@@ -1372,8 +1407,8 @@ function buildTimedReviewSteps() {
 }
 
 function buildUntimedSteps() {
-  // Untimed: bookmark controls are visible from the very start; Disagree
-  // only appears after answering, so it gets the preview treatment.
+  // Untimed: bookmark controls are visible from the very start; Disagree only
+  // appears after answering — reveal the real one for this step.
   return [
     { setup: () => document.getElementById('bmIconBtn'),
       icon: '🔖', title: 'Bookmark questions',
@@ -1381,24 +1416,28 @@ function buildUntimedSteps() {
     { setup: () => document.getElementById('bmListBtn'),
       icon: '📋', title: 'Your saved list',
       desc: 'Shows how many questions are still bookmarked. Tap it to see the list and jump straight to any of them.' },
-    { setup: () => { tutAddClass(document.getElementById('disagreeWrap'), 'show'); tutGhost(document.getElementById('disagreeWrap'));
-        return document.getElementById('disagreeWrap'); },
+    { setup: () => { tutAddClass(document.getElementById('disagreeWrap'), 'show'); return document.getElementById('disagreeWrap'); },
       icon: '✏️', title: 'Disagree with the key?',
-      desc: "Once you've answered a question, this appears right here so you can propose a correction. It won't show until you've picked an answer." }
+      desc: 'Think a question has the wrong answer? After you answer, tap this to pick what you believe is correct and explain why.' }
   ];
 }
 
 function maybeStartInitialTutorial() {
   if (SERVER_SUBMITTED) return;
-  if (EXAM_MODE) { if (!tutSeen('timedStart')) startTutorial('timedStart', buildTimedStartSteps()); }
-  else            { if (!tutSeen('untimed'))    startTutorial('untimed',    buildUntimedSteps()); }
+  if (EXAM_MODE) {
+    if (!tutSeen('timedStart')) { freezeExamCountdown(); startTutorial('timedStart', buildTimedStartSteps()); }
+    else resumeExamCountdown();
+  } else {
+    if (!tutSeen('untimed')) startTutorial('untimed', buildUntimedSteps());
+  }
 }
 function maybeStartReviewTutorial() {
   if (!tutSeen('timedReview')) startTutorial('timedReview', buildTimedReviewSteps());
 }
 
 function startTutorial(name, steps) {
-  tutSteps = steps; tutIndex = 0; tutActive = true; tutName = name;
+  tutSteps = steps; tutActive = true; tutName = name;
+  tutIndex = Math.min(tutLoadProgress(name), steps.length - 1);
   document.getElementById('tutorialOverlay').classList.add('show');
   document.body.style.overflow = 'hidden';
   window.addEventListener('resize', tutReposition);
@@ -1412,6 +1451,7 @@ function cleanupTutStep() {
 
 function renderTutStep() {
   cleanupTutStep();
+  tutSaveProgress(tutName, tutIndex);
   const step = tutSteps[tutIndex];
   const target = step.setup();
   tutCurrentTarget = target;
@@ -1435,7 +1475,13 @@ function tutReposition() { if (tutActive) applySpotlight(tutCurrentTarget); }
 
 function applySpotlight(target) {
   const mask = document.getElementById('tutorialMask');
-  if (!target) { mask.style.maskImage = 'none'; mask.style.webkitMaskImage = 'none'; positionCardCentered(); return; }
+  const ring = document.getElementById('tutorialRing');
+  if (!target) {
+    mask.style.maskImage = 'none'; mask.style.webkitMaskImage = 'none';
+    ring.classList.remove('show');
+    positionCardCentered();
+    return;
+  }
   const r = target.getBoundingClientRect();
   paintMask(r);
   positionCard(r);
@@ -1452,6 +1498,12 @@ function paintMask(r) {
     "%3C/svg%3E\\")";
   const mask = document.getElementById('tutorialMask');
   mask.style.maskImage = uri; mask.style.webkitMaskImage = uri;
+
+  const ring = document.getElementById('tutorialRing');
+  ring.style.left = x + 'px'; ring.style.top = y + 'px';
+  ring.style.width = w + 'px'; ring.style.height = h + 'px';
+  ring.style.borderRadius = radius + 'px';
+  ring.classList.add('show');
 }
 
 function positionCard(r) {
@@ -1480,11 +1532,14 @@ function prevTutStep() { if (tutIndex === 0) return; tutIndex--; renderTutStep()
 function skipTutorial() { finishTutorial(); }
 function finishTutorial() {
   cleanupTutStep();
+  const wasTimedStart = tutName === 'timedStart';
   tutMarkSeen(tutName);
   document.getElementById('tutorialOverlay').classList.remove('show');
+  document.getElementById('tutorialRing').classList.remove('show');
   document.body.style.overflow = '';
   window.removeEventListener('resize', tutReposition);
   tutActive = false; tutCurrentTarget = null;
+  if (wasTimedStart) unfreezeExamCountdown();
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
