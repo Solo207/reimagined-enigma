@@ -1398,7 +1398,7 @@ function buildTimedStartSteps() {
   return [
     { setup: () => { tutForceShow(document.getElementById('bmControls')); return document.getElementById('bmIconBtn'); },
       icon: '🔖', title: 'Bookmark questions',
-      desc: "Tap the flag to save a question you want to revisit. During a timed run this stays tucked away — you'll manage it once you submit and open Review." },
+      desc: "Tap the flag to remove a question you have saved. During a timed run this stays tucked away — you'll manage it once you submit and open Review." },
     { setup: () => { tutForceShow(document.getElementById('bmControls')); return document.getElementById('bmListBtn'); },
       icon: '📋', title: 'Your saved list',
       desc: 'Shows how many questions are still bookmarked — every question starts out saved. Open the list any time to remove ones you don\u2019t need in Review.' },
